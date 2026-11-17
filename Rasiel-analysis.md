@@ -452,3 +452,54 @@ The `/dev/socket/logd` string is loaded as a 16-byte literal at `0x2162c` and pl
 3. Reconstruct the `/dev/socket/logd` syscall sequence and determine whether it creates a local socket connection and performs reads/writes.
 4. Trace the `/proc/self/maps` parser and identify whether it searches for `libil2cpp.so`, game modules, executable regions, or hook targets.
 5. Decode the APK binary manifest and inventory all DEX files and bundled SDKs before making whole-APK privacy claims.
+
+## 66. Native `.gtap` handling: existence check and marker-file creation
+
+Further instruction-level tracing clarifies the `.gtap` behavior beyond the earlier path-string xrefs.
+
+### Two path candidates
+
+The native code contains both:
+
+- `/sdcard/Android/data/com.nianticlabs.pokemongo/files/.gtap`
+- `/data/data/com.nianticlabs.pokemongo/files/.gtap`
+
+At `0x24534–0x2456c`, it calls AArch64 syscall 48 (`faccessat`) against the external path first, then the internal path if the first check fails. The `dirfd` is `AT_FDCWD` (`-100`) and the mode argument is zero. If either path is accessible, the code records a state flag and skips the later creation branch. If neither is accessible, it proceeds to the helper at `0x212f0` with associated string arguments; the precise semantics of that helper call are not fully established here.
+
+A separate routine at `0x56eb4–0x56f34` repeats the same two-path existence checks, then issues syscall 56 (`openat`) on the external path, falling back to the internal path. The open flags are `0x41` (`O_WRONLY | O_CREAT` on Linux). On successful open it immediately issues syscall 57 (`close`). There is no write syscall in this sequence. This is therefore consistent with creating/touching an empty `.gtap` marker when neither candidate already exists; it is not evidence that the file is populated with configuration or telemetry.
+
+**Confidence:** high for the existence checks and `openat` flags/close; medium for interpreting the result as a marker/touch operation; unknown purpose and downstream consumer.
+
+## 67. `/proc/self/maps` is actively read and parsed
+
+The routine beginning at `0x2b2c4` is not merely a string reference. It opens the path held at `0x3000 + 0x84c` (the `.rodata` string is `/proc/self/maps`) using syscall 56 (`openat`) with `AT_FDCWD` and read-only flags. It then loops on syscall 63 (`read`), accumulating data into a large buffer (maximum requested capacity `0x3ffff`, 262,143 bytes), and closes the descriptor with syscall 57.
+
+The subsequent code walks the captured text line by line. It parses hexadecimal address/range fields and permission-like characters, handles separators and path text, and builds/updates arrays of mapping-related values. It also compares parsed mapping ranges against other in-memory ranges and maintains mapping counts and selected range/offset values. The parser has a bounded read loop (up to 600 iterations) and bounded mapping bookkeeping (up to 127 entries in the visible path).
+
+This establishes active process-memory-map inspection. It is compatible with module enumeration, address-range attribution, and detection of unexpected mappings or injected libraries. The disassembly inspected so far does **not** identify the exact detection rule, a named forbidden library, or a user-facing consequence. Do not label it definitively as anti-cheat or anti-hook logic until the downstream comparisons and decision branches are fully traced.
+
+**Confidence:** high that `/proc/self/maps` is opened, read, parsed, and used to build mapping/range metadata; medium for the likely module-inspection purpose; unresolved whether it flags or blocks any specific module.
+
+## 68. Native Android logd connection and structured log writes
+
+The startup path around `0x215e0–0x21680` performs a concrete Unix-domain logging operation:
+
+1. Syscall 198 creates a socket with domain `1` (`AF_UNIX`), type `2` (`SOCK_DGRAM`), protocol `0`.
+2. It constructs a `sockaddr_un` buffer containing `/dev/socket/logd` and calls syscall 203 (`connect`) with a length of 110 bytes.
+3. On success, it retains the descriptor in native state and enters the logging path. On failure, it closes the descriptor and records an error state.
+4. The logging path writes a binary Android logger header and then the supplied tag/message strings using syscall 64 (`write`), with one-byte separators/terminators around the strings.
+
+This is consistent with sending native log records directly to Android's `logd` datagram socket, rather than writing those particular messages to a file. The code path takes two strings as inputs and emits them as structured log data. The visible code does not show those records being sent to a remote server. This is a local device logging channel, separate from the confirmed Java/Dex HTTP telemetry POSTs documented earlier.
+
+**Confidence:** high for AF_UNIX datagram socket creation, connection to `/dev/socket/logd`, and subsequent writes; exact Android log priority/tag interpretation should be confirmed against the logger wire-format definition and caller arguments.
+
+## 69. Native inspection status and next unresolved questions
+
+The native evidence now supports three concrete conclusions: (1) `.gtap` is checked and may be created as an empty marker; (2) `/proc/self/maps` is read and parsed into mapping/range metadata; and (3) native messages are sent to the local Android logging daemon. None of these findings, by themselves, proves that `.gtap`, process maps, or local log records are uploaded.
+
+Remaining high-value work:
+
+- Trace the `/proc/self/maps` parser's final consumers and identify the exact conditions that set warning/error flags or alter execution.
+- Recover the call sites and string arguments for the `logd` writer to determine what events it records (including whether it logs mapping anomalies, `.gtap` state, or ordinary diagnostics).
+- Trace the helper called after the `.gtap` existence checks at `0x24570` and its caller chain to establish what the marker gates.
+- Continue mapping native JNI entry points to their Java callers and game-side IL2CPP methods, keeping confirmed behavior separate from inferred feature labels.
