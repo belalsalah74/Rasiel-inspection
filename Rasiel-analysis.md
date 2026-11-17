@@ -391,3 +391,64 @@ The requested GitHub repository `belalsalah74/Rasiel-inspection` exists but was 
 ## 63. Historical section numbering note
 
 The working Markdown artifact available for this continuation begins at section 32. The original text of sections 1–31 was not present in the supplied working file or the searchable Library copy; those sections cannot be reproduced verbatim from the evidence currently available. They are intentionally not fabricated or silently replaced with guessed prose. Sections 32 onward are preserved here, followed by the new sections 59–63.
+
+## 64. Native xrefs to `.gtap`, `sys.log`, `/proc`, and `logd`
+
+**New static-disassembly result — `libholomod.so` (ARM64).** The native library is stripped, but its `.rodata` strings can be mapped to instruction references in `.text`. The disassembly now gives more than string-presence evidence for several paths.
+
+### `.gtap`: concrete filesystem syscall path
+
+The two `.gtap` paths are referenced at native code addresses `0x24538`, `0x24558`, `0x56eb8`, `0x56ed4`, `0x56ef0`, and `0x56f0c`:
+
+- `/sdcard/Android/data/com.nianticlabs.pokemongo/files/.gtap`
+- `/data/data/com.nianticlabs.pokemongo/files/.gtap`
+
+The surrounding code loads the path into `x1` and issues AArch64 Linux syscalls directly with `svc #0`. The syscall numbers visible in the code include `48` (`faccessat`), `56` (`openat`), `65` (`read`), and `57` (`close`). This is consistent with checking for and opening/reading the `.gtap` file, with fallback between external and internal game paths. The code also contains a read operation after opening the path. This is materially stronger than a string-only observation: **native code is configured to access and read `.gtap`**, although the exact data format and meaning remain unknown.
+
+The relevant sequence includes:
+
+- `0x24538`: `faccessat`-style check using the external `.gtap` path.
+- `0x24558`: `openat`-style attempt using the internal `.gtap` path after the first path check/failure branch.
+- `0x56eb8` onward: repeated path checks/open attempts, followed by a `read` and `close` path.
+
+The precise control-flow conditions and the consumer of the bytes still need a complete function-level trace. Do not call `.gtap` a telemetry file or assume it contains logs; the evidence only establishes file access/read behavior.
+
+### `sys.log`: paths are referenced during native initialization
+
+The two Pokémon GO `sys.log` strings are referenced at `0x21310` and `0x2132c` in the `JNI_OnLoad` region:
+
+- `/sdcard/Android/data/com.nianticlabs.pokemongo/files/sys.log`
+- `/data/data/com.nianticlabs.pokemongo/files/sys.log`
+
+The references are passed into a native helper path that performs direct syscalls. The nearby startup code also contains calls to a logging helper. This establishes that the native initialization path uses the game-log path constants, but the current trace does not yet conclusively identify whether it reads, tails, truncates, or writes the log, nor whether log contents are sent anywhere. Further tracing of the helper and syscall arguments is required before describing the operation as log collection or upload.
+
+### `/proc/self/status` and `/proc/self/maps`
+
+- `/proc/self/status` is referenced at `0x210cc`, in the `JNI_OnLoad` startup sequence.
+- `/proc/self/maps` is referenced at `0x2b2f8` and `0x2b348` in a separate native routine.
+
+These references are consistent with reading process status and memory-map information. The `/proc/self/maps` routine contains direct syscall-based file access logic and repeated reads. The current pass has not yet fully reconstructed the loop's buffer handling or the purpose of the parsed map entries. This is evidence of native process/memory-map inspection, not by itself proof of anti-cheat evasion, injection, or data exfiltration.
+
+### `/dev/socket/logd`
+
+The `/dev/socket/logd` string is loaded as a 16-byte literal at `0x2162c` and placed into a stack buffer before a direct syscall at `0x21644`. This is a concrete code reference to Android's log daemon socket path. The exact syscall's arguments and subsequent control flow need further reconstruction; the current result does not yet prove a successful socket connection or log reading.
+
+### Updated confidence table
+
+| Artifact | Strongest evidence now available | What remains unknown |
+|---|---|---|
+| `.gtap` | Native path references plus `faccessat`/`openat`/`read`/`close` syscall sequence | File format, byte interpretation, origin, destination/use |
+| `sys.log` | Native startup references to both game paths, passed through helper/syscall path | Read vs write vs existence check; content; any transmission |
+| `/proc/self/status` | Native startup code reference | Whether it is read and which fields are parsed |
+| `/proc/self/maps` | Two native references in a routine with direct file-read pattern | Parsed fields and purpose |
+| `/dev/socket/logd` | Literal loaded into stack buffer and used in syscall setup | Whether connect succeeds and what data is read/written |
+
+**Privacy conclusion update:** the native library does more than merely contain diagnostic path strings. It has a concrete filesystem access/read path for `.gtap`, and native code references the game's `sys.log`, process status/maps, and Android log daemon socket. No evidence in this pass establishes that these data are uploaded. The previously confirmed Java/Dex telemetry POST to `mklister.com` remains a separate, established outbound path.
+
+## 65. Next native-analysis targets
+
+1. Fully reconstruct the `.gtap` reader's syscall arguments, buffer loop, and caller/callee chain; identify whether the file is a configuration, state, or diagnostic artifact.
+2. Follow the `sys.log` path references through the helper and determine whether native code checks, opens, reads, appends, or truncates the file.
+3. Reconstruct the `/dev/socket/logd` syscall sequence and determine whether it creates a local socket connection and performs reads/writes.
+4. Trace the `/proc/self/maps` parser and identify whether it searches for `libil2cpp.so`, game modules, executable regions, or hook targets.
+5. Decode the APK binary manifest and inventory all DEX files and bundled SDKs before making whole-APK privacy claims.
