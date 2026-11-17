@@ -503,3 +503,39 @@ Remaining high-value work:
 - Recover the call sites and string arguments for the `logd` writer to determine what events it records (including whether it logs mapping anomalies, `.gtap` state, or ordinary diagnostics).
 - Trace the helper called after the `.gtap` existence checks at `0x24570` and its caller chain to establish what the marker gates.
 - Continue mapping native JNI entry points to their Java callers and game-side IL2CPP methods, keeping confirmed behavior separate from inferred feature labels.
+
+
+## 70. `/proc/self/maps` parser: what it actually extracts
+
+A deeper pass through `0x2b2c4–0x2bc1c` establishes more than simple line parsing.
+
+### Input and parsing
+
+- The function opens the `/proc/self/maps` path at `0x2b388` with syscall 56 (`openat`), `AT_FDCWD`, and read-only flags (zero).
+- It reads into a dedicated global buffer in a loop using syscall 63 (`read`), requesting up to `0x3ffff` bytes per iteration and stopping on EOF/error or after 600 loop iterations.
+- It NUL-terminates the collected text and closes the descriptor.
+- It iterates each newline-delimited maps record. It parses the hexadecimal start and end addresses around the dash, advances over the permission/offset/device/inode columns, and extracts the trailing pathname (or other mapping label).
+- The parser converts hexadecimal text manually; it does not simply retain the raw line strings.
+
+### Range bookkeeping and cross-checks
+
+The routine stores parsed address-derived values in global arrays, tracks the number of discovered mappings (bounded at 127 entries in the relevant arrays), and associates entries with additional per-mapping counters/metadata. It also compares parsed ranges with pre-existing address/size records in other global tables. For matching address intervals it calculates relative offsets and performs further comparisons against values held in other native tables.
+
+This is consistent with reconciling the process's live virtual-memory layout against a separately known set of ranges or metadata. It could support IL2CPP/module address resolution, integrity checking, or hook/injection inspection. The disassembly alone does not prove which of those is the primary purpose: the compared global tables are not yet symbolically identified, and the final decision logic has not been tied to a named JNI feature.
+
+### Caller context
+
+The only direct call site found in the current disassembly is at `0x23b7c`, where a preceding runtime-object operation sequence completes and then invokes the maps parser before returning from that native routine. This places the inspection in a native initialization/setup path, rather than demonstrating that it runs continuously on every gameplay action. No periodic scheduler or repeated Java callback has been established for this parser.
+
+**Assessment:** high confidence that the routine reads and parses the live process map and cross-references address ranges; medium confidence that this supports module/IL2CPP address resolution or integrity inspection; low confidence in any specific anti-cheat/anti-hook interpretation until the global tables and result consumers are identified.
+
+## 71. Limits of the current anti-tamper conclusion
+
+The new trace narrows the claim but does not justify calling this a confirmed anti-cheat detector:
+
+- Confirmed: process maps are read, hexadecimal mapping boundaries are parsed, mapping records are stored, and address ranges are cross-referenced with other native metadata.
+- Not yet confirmed: a blacklist of module names, detection of Frida/Xposed/LSPosed, a decision to terminate or disable the overlay, or reporting of a detection to a server.
+- The parser's call site is currently seen during native setup. Continuous monitoring has not been demonstrated.
+- The native library also has confirmed local `logd` writes, but the inspected parser has not yet been connected to a specific log message.
+
+Next, identify the native globals used as the reference range tables, map the post-parse comparison result into its caller, and recover the log writer's callers/arguments. Those are needed to distinguish ordinary IL2CPP address discovery from anti-instrumentation behavior.
