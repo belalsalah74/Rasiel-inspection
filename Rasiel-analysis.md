@@ -704,7 +704,7 @@ This gives a direct method-name/signature/function mapping, rather than relying 
 | 42 | `nativeQuestRemove` | `(Ljava/lang/String;)Z` | `0x27d70` |
 | 43 | `nativeQuestSeen` | `()Ljava/lang/String;` | `0x27e68` |
 | 44 | `nativeQuestsHeld` | `()Ljava/lang/String;` | `0x281b4` |
-| 45 | `nativeR8K` | `() [B` | `0x28408` |
+| 45 | `nativeR8K` | `()[B` | `0x28408` |
 | 46 | `nativeR8Pack` | `([B)Z` | `0x285d8` |
 | 47 | `nativeRadarCount` | `(I)I` | `0x286e4` |
 | 48 | `nativeRangeExtra` | `()I` | `0x2871c` |
@@ -742,7 +742,7 @@ This gives a direct method-name/signature/function mapping, rather than relying 
 | 80 | `z70a` | `(JDDLjava/lang/String;)V` | `0x29790` |
 | 81 | `z70b` | `(J)V` | `0x297a0` |
 
-**Note:** `nativeR8K`'s exact descriptor is `() [B` without the space, i.e. `() [B` is represented in the raw DEX/JNI form as `() [B`? The signature recovered from the relocation-backed table is `() [B` with no semantic ambiguity: it returns a byte array (`()[B`). The table above should be read as `() [B` = `() [B` (byte-array return).
+**Note:** `nativeR8K` returns a byte array; its exact JNI descriptor is `()[B`.
 
 ### Feature clusters visible directly from the registered API
 
