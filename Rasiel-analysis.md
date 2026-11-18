@@ -855,3 +855,70 @@ This is consistent with a bootstrap phase that caches Java methods/fields or cla
 | `nativeInit` | Resolves/caches JNI-side IDs/references and handles pending exceptions | Exact Java classes/methods/fields represented by the encoded strings |
 
 Next trace the producer of the 80-byte records and 24-entry candidate array. Their insertion/update JNI methods will reveal the actual object types and connect these selection functions to feed, encounter, map, or hunt behavior.
+
+
+## 85. The hunt candidate helpers use `process_vm_readv` to inspect another process's memory
+
+The helper routines called by `nativeHuntTap` are now decoded at the syscall level. They do not simply dereference ordinary in-process C++ objects.
+
+On AArch64 Linux, syscall 270 is `process_vm_readv`. Both helpers construct local and remote `iovec` structures and invoke syscall 270 using a PID held in native global state at `0xb6000 + 0x4f8`.
+
+### Helper `0x2ac70`: coordinate extraction
+
+Inputs:
+- `x0`: candidate object address
+- `x1`: output pointer for the first double
+- `x2`: output pointer for the second double
+
+Observed behavior:
+
+1. Adds `0x118` to the candidate address.
+2. Reads an 8-byte pointer/value from that remote address using `process_vm_readv`.
+3. Rejects the result if it is below `0x10000`.
+4. Adds `0x38` to the returned remote pointer.
+5. Reads 16 bytes from that remote address.
+6. Copies the two 64-bit values into the caller's output locations as doubles and returns true.
+
+Thus the coordinates are not stored inline at candidate+`0x118`; the candidate contains a pointer at that offset, and the two doubles are at pointer+`0x38`.
+
+### Helper `0x2aaf4`: integer-property extraction
+
+This helper also uses `process_vm_readv`:
+
+1. Adds the candidate address to a base value held at `0xb6000 + 0x4f8`? No: the base at `0xb6000 + 0x4f8` is the PID argument to the syscall; the remote address is formed from the candidate and a separate base at `0xb6000 + 0x4f8`-adjacent state as shown by the instruction sequence.
+2. Reads an 8-byte value from the candidate-related remote address.
+3. Validates the returned pointer/value and, when the secondary global pointer at `0xbc000 + 0x8a8` is set, verifies a second remote value against it.
+4. Reads a 32-bit integer at offset `+0x28` from the resolved remote structure.
+5. Returns that integer only when it falls within the accepted range 1–2000; otherwise returns zero.
+
+The integer returned by this helper is exactly what `nativeHuntTap` compares with its positive JNI integer argument. The field therefore acts as a numeric candidate discriminator/filter, but its game-level meaning is not yet known.
+
+**Correction to avoid ambiguity:** the syscall PID and the remote virtual address are separate arguments in the `process_vm_readv` setup. The PID is loaded from native global state; the candidate-derived address is placed in the remote iovec. The disassembly establishes remote-process memory reads, but this section does not claim that the PID is always the Pokémon GO PID until the PID initialization path is fully traced.
+
+## 86. The 24-entry hunt list contains remote object addresses, not copied object records
+
+Combining the `nativeHuntTap` loop with helpers `0x2aaf4` and `0x2ac70` changes the interpretation of the candidate array:
+
+- The array at `0xbc000 + 0x580` contains pointers/addresses that are passed to remote-memory readers.
+- The function scans at most 24 entries.
+- For each candidate, it remotely reads a nested pointer at candidate+`0x118`, then reads coordinates at nested-pointer+`0x38`.
+- It separately reads a 32-bit value at a candidate-related structure offset `+0x28` for optional filtering.
+- The candidate itself is not copied into a local 80-byte record. The 80-byte record table used by `nativeArmDirect` is a distinct data structure.
+
+This means the two nearest-candidate functions operate on different representations:
+- `nativeArmDirect`: local 80-byte records with inline coordinates at offsets `+0x18/+0x20`.
+- `nativeHuntTap`: a bounded list of remote object addresses whose fields are fetched on demand through `process_vm_readv`.
+
+The separation is important: do not merge their structures or assume they select the same class of object.
+
+## 87. What is still required to identify the remote candidate type
+
+The remote read path is now established, but the exact object type remains unresolved. The next required traces are:
+
+1. Find where the PID at `0xb6000 + 0x4f8` is initialized and prove which process it targets.
+2. Find writers to the candidate pointer array at `0xbc000 + 0x580`, especially stores that update its count/state.
+3. Identify the owner of the remote object field at candidate+`0x118` and the nested coordinate pair at nested+`0x38`.
+4. Resolve the numeric field at candidate+`0x28` against the relevant game metadata/class layout.
+5. Trace the post-selection caller to establish whether selection leads to a tap, encounter action, or a separate hunt state transition.
+
+Until those links are recovered, the most accurate description is **remote-object candidate selection by coordinate and numeric-property filters**, not confirmed Pokémon selection.
