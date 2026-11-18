@@ -861,7 +861,7 @@ Next trace the producer of the 80-byte records and 24-entry candidate array. The
 
 The helper routines called by `nativeHuntTap` are now decoded at the syscall level. They do not simply dereference ordinary in-process C++ objects.
 
-On AArch64 Linux, syscall 270 is `process_vm_readv`. Both helpers construct local and remote `iovec` structures and invoke syscall 270 using a PID held in native global state at `0xb6000 + 0x4f8`.
+On AArch64 Linux, syscall 270 is `process_vm_readv`. Both helpers construct local and remote `iovec` structures and invoke syscall 270 using a PID loaded from native global state at `0xba000 + 0x828`. The separate global at `0xb6000 + 0x4f8` is used as a remote-address base by the integer-property helper, not as the PID.
 
 ### Helper `0x2ac70`: coordinate extraction
 
@@ -893,7 +893,7 @@ This helper also uses `process_vm_readv`:
 
 The integer returned by this helper is exactly what `nativeHuntTap` compares with its positive JNI integer argument. The field therefore acts as a numeric candidate discriminator/filter, but its game-level meaning is not yet known.
 
-**Correction to avoid ambiguity:** the syscall PID and the remote virtual address are separate arguments in the `process_vm_readv` setup. The PID is loaded from native global state; the candidate-derived address is placed in the remote iovec. The disassembly establishes remote-process memory reads, but this section does not claim that the PID is always the Pokémon GO PID until the PID initialization path is fully traced.
+**Correction to avoid ambiguity:** the syscall PID is loaded from `0xba000 + 0x828`; the remote virtual address is supplied through the remote iovec. The integer-property helper additionally adds the candidate value to the remote-address base at `0xb6000 + 0x4f8`. The disassembly establishes remote-process memory reads, but the PID initialization path still needs tracing before naming the target process.
 
 ## 86. The 24-entry hunt list contains remote object addresses, not copied object records
 
@@ -915,7 +915,7 @@ The separation is important: do not merge their structures or assume they select
 
 The remote read path is now established, but the exact object type remains unresolved. The next required traces are:
 
-1. Find where the PID at `0xb6000 + 0x4f8` is initialized and prove which process it targets.
+1. Find where the PID at `0xba000 + 0x828` is initialized and prove which process it targets; separately identify the remote-address base at `0xb6000 + 0x4f8`.
 2. Find writers to the candidate pointer array at `0xbc000 + 0x580`, especially stores that update its count/state.
 3. Identify the owner of the remote object field at candidate+`0x118` and the nested coordinate pair at nested+`0x38`.
 4. Resolve the numeric field at candidate+`0x28` against the relevant game metadata/class layout.
