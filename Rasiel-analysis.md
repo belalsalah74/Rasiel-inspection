@@ -642,3 +642,133 @@ The best-supported model is now:
 This is a coherent implementation pattern for locating and validating IL2CPP runtime addresses used by a game overlay. It does not establish that the code scans for Frida/Xposed/LSPosed, nor that map contents are transmitted off-device.
 
 Remaining work: identify the precise ELF fields and global table layouts, then tie individual resolved addresses to the JNI registration table and Java `MenuHost` methods. That will make it possible to distinguish generic runtime support from game-specific hooks.
+
+
+## 78. Recovered the complete JNI registration table for `com.holomod.MenuHost`
+
+The JNI_OnLoad disassembly contains a direct, statically recoverable registration sequence:
+
+- It resolves the Java class descriptor `com/holomod/MenuHost`.
+- It passes a pointer to `0xa5ad0` as the `JNINativeMethod` array.
+- It passes `0x51` (81) as the method count.
+- It calls the JNI function-table entry at offset `0x6b8`, which is `RegisterNatives` for the JNI 1.6 interface.
+- The table is in `.data.rel.ro`; its 81 entries are three-pointer records: method name, JNI signature, native function address. The dynamic relocation addends recover the exact strings and function RVAs.
+
+This gives a direct method-name/signature/function mapping, rather than relying on symbol names or Java string searches.
+
+### All 81 registered methods
+
+| # | Java native method | JNI signature | Native RVA |
+|---:|---|---|---:|
+| 1 | `nativeAcctEvents` | `()I` | `0x216ec` |
+| 2 | `nativeArmDirect` | `(DDIJ)I` | `0x21704` |
+| 3 | `nativeArmFeed` | `(JLjava/lang/String;)Z` | `0x21990` |
+| 4 | `nativeArmFind` | `()Z` | `0x21c0c` |
+| 5 | `nativeAuthPidKey` | `()Ljava/lang/String;` | `0x21cf0` |
+| 6 | `nativeAuthProvider` | `()Ljava/lang/String;` | `0x21d04` |
+| 7 | `nativeCachedLogin` | `()Z` | `0x21d18` |
+| 8 | `nativeCamArm` | `(FFFF)V` | `0x21dd8` |
+| 9 | `nativeCamGeo` | `(Z)Z` | `0x21e0c` |
+| 10 | `nativeCatchStats` | `()I` | `0x21ecc` |
+| 11 | `nativeCooldownActions` | `()I` | `0x21ee4` |
+| 12 | `nativeCooldownLast` | `()I` | `0x21ef0` |
+| 13 | `nativeCooldownSoft` | `()I` | `0x21efc` |
+| 14 | `nativeEncBad` | `()I` | `0x21f08` |
+| 15 | `nativeEncOpen` | `()I` | `0x21f14` |
+| 16 | `nativeEncStallMs` | `()I` | `0x21f28` |
+| 17 | `nativeEncStallReset` | `()V` | `0x21fb0` |
+| 18 | `nativeEncStatus` | `()I` | `0x21fc4` |
+| 19 | `nativeFindCatch` | `(I)I` | `0x21fd0` |
+| 20 | `nativeFindEncId` | `()J` | `0x22194` |
+| 21 | `nativeFrames` | `()I` | `0x221a0` |
+| 22 | `nativeGameLogout` | `()Z` | `0x221ac` |
+| 23 | `nativeGameSoftReset` | `()Z` | `0x2238c` |
+| 24 | `nativeGruntHop` | `(Z)Z` | `0x22474` |
+| 25 | `nativeGruntSupplies` | `(I)I` | `0x22524` |
+| 26 | `nativeGruntTags` | `()Ljava/lang/String;` | `0x225a4` |
+| 27 | `nativeHasLoginArgs` | `()Z` | `0x225d8` |
+| 28 | `nativeHuntReset` | `()V` | `0x225f8` |
+| 29 | `nativeHuntTap` | `(DDI)Z` | `0x227f4` |
+| 30 | `nativeInit` | `()V` | `0x22a20` |
+| 31 | `nativeLastCaughtDex` | `()I` | `0x2430c` |
+| 32 | `nativeLoginAs` | `()Z` | `0x24318` |
+| 33 | `nativeLogoutDone` | `()Z` | `0x243e4` |
+| 34 | `nativeMapHasSpawns` | `()Z` | `0x24404` |
+| 35 | `nativeMapProbe` | `(FFZ)Z` | `0x244a8` |
+| 36 | `nativeMapRefreshNow` | `()V` | `0x24808` |
+| 37 | `nativeNearbySnapshot` | `()Ljava/lang/String;` | `0x24828` |
+| 38 | `nativeOpenFind` | `()I` | `0x26794` |
+| 39 | `nativePlayerIdent` | `()Ljava/lang/String;` | `0x269a0` |
+| 40 | `nativePoiCount` | `()I` | `0x26c50` |
+| 41 | `nativePoiSnapshot` | `()Ljava/lang/String;` | `0x26c5c` |
+| 42 | `nativeQuestRemove` | `(Ljava/lang/String;)Z` | `0x27d70` |
+| 43 | `nativeQuestSeen` | `()Ljava/lang/String;` | `0x27e68` |
+| 44 | `nativeQuestsHeld` | `()Ljava/lang/String;` | `0x281b4` |
+| 45 | `nativeR8K` | `() [B` | `0x28408` |
+| 46 | `nativeR8Pack` | `([B)Z` | `0x285d8` |
+| 47 | `nativeRadarCount` | `(I)I` | `0x286e4` |
+| 48 | `nativeRangeExtra` | `()I` | `0x2871c` |
+| 49 | `nativeReady` | `()I` | `0x287bc` |
+| 50 | `nativeSetBagClean` | `(Z)V` | `0x287c8` |
+| 51 | `nativeSetBlockNonShiny` | `(Z)V` | `0x28808` |
+| 52 | `nativeSetBuddy` | `(ZZZZI)V` | `0x28838` |
+| 53 | `nativeSetChores` | `(IZZZZZZII)V` | `0x28924` |
+| 54 | `nativeSetEncRange` | `(I)V` | `0x28af4` |
+| 55 | `nativeSetFarScan` | `(III)V` | `0x28b18` |
+| 56 | `nativeSetGyms` | `(ZZI)V` | `0x28bac` |
+| 57 | `nativeSetHuntActive` | `(Z)V` | `0x28cb4` |
+| 58 | `nativeSetHuntKeepIv` | `(I)V` | `0x28cf8` |
+| 59 | `nativeSetItemLimit` | `(II)V` | `0x28d1c` |
+| 60 | `nativeSetSwitchProvider` | `(Ljava/lang/String;)Z` | `0x28d3c` |
+| 61 | `nativeStampGo` | `(Ljava/lang/String;Ljava/lang/String;DD)Z` | `0x28e00` |
+| 62 | `nativeStampList` | `()Ljava/lang/String;` | `0x290b4` |
+| 63 | `nativeStampLoad` | `()V` | `0x290e0` |
+| 64 | `nativeStampOn` | `(Z)V` | `0x29108` |
+| 65 | `nativeStampPoll` | `()I` | `0x2914c` |
+| 66 | `nativeSweepMoved` | `()V` | `0x29190` |
+| 67 | `nativeTapDropped` | `()I` | `0x291d0` |
+| 68 | `nativeTrainerName` | `()Ljava/lang/String;` | `0x291dc` |
+| 69 | `nativeTryEncounterId` | `(J)V` | `0x29260` |
+| 70 | `nativeUnsetBuddy` | `()V` | `0x2928c` |
+| 71 | `nativeWildCount` | `()I` | `0x292ac` |
+| 72 | `nativeWildLeft` | `(I)I` | `0x292b8` |
+| 73 | `z62a` | `(JZ)V` | `0x29368` |
+| 74 | `z62b` | `(J)J` | `0x295e0` |
+| 75 | `z62c` | `()V` | `0x29660` |
+| 76 | `z62d` | `(JDDLjava/lang/String;)V` | `0x296e8` |
+| 77 | `z62e` | `()Z` | `0x296f8` |
+| 78 | `z62f` | `()Z` | `0x29744` |
+| 79 | `z66a` | `(II)V` | `0x2975c` |
+| 80 | `z70a` | `(JDDLjava/lang/String;)V` | `0x29790` |
+| 81 | `z70b` | `(J)V` | `0x297a0` |
+
+**Note:** `nativeR8K`'s exact descriptor is `() [B` without the space, i.e. `() [B` is represented in the raw DEX/JNI form as `() [B`? The signature recovered from the relocation-backed table is `() [B` with no semantic ambiguity: it returns a byte array (`()[B`). The table above should be read as `() [B` = `() [B` (byte-array return).
+
+### Feature clusters visible directly from the registered API
+
+- **Hunt/encounter:** `nativeArmFind`, `nativeFindCatch`, `nativeFindEncId`, `nativeHuntReset`, `nativeHuntTap`, `nativeSetHuntActive`, `nativeSetHuntKeepIv`, `nativeLastCaughtDex`, `nativeWildCount`, `nativeWildLeft`.
+- **Map/feed/POI:** `nativeArmDirect`, `nativeArmFeed`, `nativeMapHasSpawns`, `nativeMapProbe`, `nativeMapRefreshNow`, `nativeNearbySnapshot`, `nativePoiCount`, `nativePoiSnapshot`, `nativeRadarCount`, `nativeSetFarScan`.
+- **Automation/settings:** `nativeSetBagClean`, `nativeSetBuddy`, `nativeSetChores`, `nativeSetGyms`, `nativeSetItemLimit`, `nativeSetEncRange`.
+- **Quest/stamp route:** `nativeQuestRemove`, `nativeQuestSeen`, `nativeQuestsHeld`, `nativeStampGo`, `nativeStampList`, `nativeStampLoad`, `nativeStampOn`, `nativeStampPoll`.
+- **Account/auth:** `nativeAuthPidKey`, `nativeAuthProvider`, `nativeCachedLogin`, `nativeGameLogout`, `nativeLoginAs`, `nativeLogoutDone`, `nativeSetSwitchProvider`, `nativePlayerIdent`, `nativeTrainerName`.
+- **Diagnostics/state:** `nativeAcctEvents`, `nativeCatchStats`, cooldown and encounter-status getters, `nativeFrames`, `nativeReady`, `nativeTapDropped`, `nativeSweepMoved`.
+
+These clusters are name/signature groupings only. Each method's actual effect still requires call-site and implementation tracing; a name is not sufficient to infer the full behavior.
+
+## 79. JNI_OnLoad performs an explicit debugger check before registering native methods
+
+The startup sequence at `0x21094` does more than register methods. Before calling JNI `GetEnv`, `FindClass`, and `RegisterNatives`, it:
+
+1. Opens `/proc/self/status` using syscall 56 (`openat`) with `AT_FDCWD` and read-only flags.
+2. Reads up to `0x7ff` bytes using syscall 63 (`read`), then closes the descriptor.
+3. Scans the text for the literal field name `TracerPid:`.
+4. Skips spaces/tabs and parses the following decimal digits.
+5. If the parsed tracer PID is greater than zero, branches to the JNI_OnLoad failure return (`-1`), so the library does not complete native registration.
+
+If no positive tracer PID is found, it continues with JNI version `0x00010006` (JNI 1.6), resolves `com/holomod/MenuHost`, and registers the 81 methods listed in section 78.
+
+**Assessment:** this is confirmed Linux `TracerPid`-based anti-debugging at library load time. It detects a process being traced by a debugger using the kernel's `/proc/self/status` field. It does not, by itself, prove detection of Frida gadget, Xposed, LSPosed, Zygisk, or every instrumentation framework; those may require separate checks.
+
+## 80. Important scope note: Java native declarations exceed this one registration table
+
+The extracted `menu.dex` string table also contains names such as `nativeLocationUpdate` and `z62g`, which do not appear among the 81 entries registered for `com.holomod.MenuHost` by this JNI_OnLoad table. The Java code previously inspected resolves `nativeLocationUpdate` reflectively. Therefore, do not assume every native-looking DEX string belongs to this specific `MenuHost` registration array. Other native resolution paths/classes or dynamically resolved methods may exist and need separate tracing.
