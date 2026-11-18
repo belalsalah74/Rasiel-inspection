@@ -772,3 +772,86 @@ If no positive tracer PID is found, it continues with JNI version `0x00010006` (
 ## 80. Important scope note: Java native declarations exceed this one registration table
 
 The extracted `menu.dex` string table also contains names such as `nativeLocationUpdate` and `z62g`, which do not appear among the 81 entries registered for `com.holomod.MenuHost` by this JNI_OnLoad table. The Java code previously inspected resolves `nativeLocationUpdate` reflectively. Therefore, do not assume every native-looking DEX string belongs to this specific `MenuHost` registration array. Other native resolution paths/classes or dynamically resolved methods may exist and need separate tracing.
+
+
+## 81. `nativeArmDirect(double, double, int, long)`: nearest-entry selection over the native 80-byte record table
+
+The registered implementation at `0x21704` is now traced through its main selection loop.
+
+### Record layout observed by the routine
+
+It walks a global array rooted at `0xb8000 + 0x120`, using an 80-byte stride (`0x50`). For each record it reads:
+
+- `+0x00`: pointer, required non-null
+- `+0x08`: pointer, required non-null
+- `+0x10`: 64-bit identifier/key, conditionally compared with the JNI `long` argument
+- `+0x18` and `+0x20`: two doubles used as coordinates
+- `+0x28`: integer field conditionally compared with the JNI `int` argument
+
+The routine also checks the first pointer against a separate exclusion-pointer array rooted at `0xb9000 + 0xf48`, with count at `0xb9000 + 0xf44`.
+
+### Selection behavior
+
+- The candidate count is the global integer at `0xb8000 + 0x11c`.
+- Null records and records whose pointers appear in the exclusion list are skipped.
+- When the integer argument is positive, records with a positive `+0x28` value must match it.
+- When the `long` argument is nonzero, the record's `+0x10` value is checked against it. A fallback comparison uses high bits when an exact match is not established.
+- Candidate coordinates at `+0x18/+0x20` are compared with the two incoming doubles. The code computes squared Euclidean distance in the coordinate plane and keeps the closest eligible candidate.
+- A selected candidate is accepted only if it is within the routine's configured distance threshold. It then copies the record's two leading pointers and identifier into global selection state, resets a related status field, logs the selected identifier and integer field, and returns true. Otherwise it returns false and may log the candidate count or distance diagnostic.
+
+This is not a generic JNI wrapper: it is a real nearest-candidate selector over a native record collection, with exclusion, type/category, identifier and distance filters.
+
+**What is not yet established:** the semantic meaning of the two pointers, the integer at `+0x28`, or the 64-bit key. They could represent a game entity, POI, feed record, or another overlay object. The method name `ArmDirect` and its arguments do not prove the user-facing feature on their own.
+
+## 82. `nativeHuntTap(double, double, int)`: guarded nearest-object selection
+
+The registered implementation at `0x227f4` is a short guard followed by a larger selection routine beginning at `0x22820`.
+
+### Preconditions
+
+It immediately returns false if any of three global state values are nonzero:
+
+- `[0xba000 + 0x968]`
+- `[0xbc000 + 0x690]`
+- `[0xb9000 + 0xf40]`
+
+These appear to be mutually relevant operation/busy/status flags; their exact names are unavailable in the stripped binary.
+
+### Candidate traversal
+
+- It scans a pointer array rooted at `0xbc000 + 0x580`, at most 24 entries.
+- Null pointers are skipped.
+- A pointer exclusion list rooted at `0xbc000 + 0x6a8` is consulted using the count at `0xbc000 + 0x668`.
+- If the JNI integer argument is positive, helper `0x2aaf4(candidate)` is called and its returned integer must match the requested value.
+- Helper `0x2ac70(candidate, &coordA, &coordB)` extracts two double coordinates. Candidates for which it returns false are skipped.
+- The routine computes squared distance from the supplied JNI double coordinates to each candidate and retains the closest match.
+- It compares the winning distance against a configured threshold. If no eligible candidate is found, or the threshold test fails, the function returns false.
+
+There is also a fallback path using a previously stored global pointer at `0xb9000 + 0xf28` when the integer argument is negative. The function can ask helper `0x2ad78` for a candidate in that fallback path.
+
+**Assessment:** high confidence this method selects the nearest eligible object from a small live candidate set using coordinates and optional integer filtering. The method name suggests a hunt interaction, but the binary evidence alone does not prove that the selected object is a Pokémon encounter or that the routine performs a tap itself. No game-side tap/click call is visible in the selection loop shown here.
+
+## 83. JNI initialization resolves and caches a large set of Java-side runtime references
+
+The registered `nativeInit()` implementation at `0x22a20` begins by emitting a native diagnostic, then uses the supplied `JNIEnv` and Java object to resolve and cache many Java-side IDs and references in global storage.
+
+The visible pattern repeatedly:
+
+- Loads a string pair from the native string pool.
+- Calls JNI function-table entries through the current `JNIEnv`.
+- Stores returned IDs/references in global slots under `0xbc000` (for example offsets `0x950`, `0x958`, `0x960`, `0x968`, `0x980`, `0x988`, `0x990`, and `0x998`).
+- Checks for pending Java exceptions after selected JNI calls and clears them through the JNI exception functions before continuing.
+
+This is consistent with a bootstrap phase that caches Java methods/fields or class references needed by later native callbacks. The actual class/member names are not safely recoverable from the currently decoded string view, so this section does not invent names or claim specific Android APIs.
+
+**Important:** `nativeInit` is not itself the game-side IL2CPP resolver. It is a Java/JNI bridge initialization routine. The separate `/proc/self/maps` and `libil2cpp.so` inspection path described earlier belongs to native runtime setup and should be analyzed independently.
+
+## 84. What these three functions establish—and what remains open
+
+| Function | Confirmed behavior | Still unresolved |
+|---|---|---|
+| `nativeArmDirect` | Filters an 80-byte record array and chooses the nearest coordinate match; stores selected record state | Record/object type and exact feature semantics |
+| `nativeHuntTap` | Checks busy flags, scans up to 24 candidate pointers, filters and selects the nearest coordinate match | Whether candidates are Pokémon, and where actual game interaction occurs |
+| `nativeInit` | Resolves/caches JNI-side IDs/references and handles pending exceptions | Exact Java classes/methods/fields represented by the encoded strings |
+
+Next trace the producer of the 80-byte records and 24-entry candidate array. Their insertion/update JNI methods will reveal the actual object types and connect these selection functions to feed, encounter, map, or hunt behavior.
