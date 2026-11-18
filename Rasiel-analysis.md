@@ -539,3 +539,51 @@ The new trace narrows the claim but does not justify calling this a confirmed an
 - The native library also has confirmed local `logd` writes, but the inspected parser has not yet been connected to a specific log message.
 
 Next, identify the native globals used as the reference range tables, map the post-parse comparison result into its caller, and recover the log writer's callers/arguments. Those are needed to distinguish ordinary IL2CPP address discovery from anti-instrumentation behavior.
+
+
+## 72. Key correction: the maps parser explicitly locates `libil2cpp.so`
+
+The parser's pathname comparison now resolves an important ambiguity from sections 70–71.
+
+- The parser's comparison string is at native address `0x4af3`, and resolves exactly to `libil2cpp.so`.
+- While walking each `/proc/self/maps` line, it compares the extracted pathname against this string. It therefore identifies mappings belonging to the Pokémon GO IL2CPP runtime, rather than treating every mapped library as an equivalent candidate.
+- For matching records, it retains the mapping start/end information and associates the mapping with separately maintained native metadata tables.
+- The routine then cross-references mapping-relative addresses/offsets against range-and-offset tables. This is consistent with resolving native IL2CPP addresses and validating that the expected address lies inside an appropriate mapped segment.
+- Later code formats/logs diagnostic strings using the selected range and mapping information. The exact human-readable message text remains obfuscated in the string pool, so no user-facing wording is asserted.
+
+This is strong evidence that a primary purpose of the maps parser is **IL2CPP module/segment discovery and address translation**. It may also provide integrity checks as a side effect, but the evidence currently available does not establish that the parser is principally an anti-Frida/anti-Xposed/anti-LSPosed detector.
+
+### Revised assessment
+
+| Claim | Assessment |
+|---|---|
+| Reads and parses `/proc/self/maps` | Confirmed |
+| Explicitly matches `libil2cpp.so` | Confirmed |
+| Uses map ranges with native address/offset metadata | Confirmed |
+| Supports IL2CPP address resolution | Strongly supported |
+| Detects a named hooking framework | Not established |
+| Terminates or blocks execution on a hook detection | Not established |
+| Uploads map contents | No evidence found |
+
+This supersedes any earlier implication that the maps parser itself is likely an anti-hook scanner. Its demonstrated behavior is much more directly explained by the overlay's extensive IL2CPP reflection/address-resolution requirements.
+
+## 73. Startup call-chain context for IL2CPP map discovery
+
+The direct call to the maps parser at `0x23b7c` occurs after a sequence of JNI/IL2CPP runtime operations in the same native setup routine:
+
+- It obtains runtime-associated objects through indirect function-table calls.
+- It invokes a method through a runtime interface and checks the returned value.
+- It then calls the maps parser and returns from the setup routine.
+
+The parser's output is subsequently used by code that constructs diagnostic/address descriptions and resolves addresses against metadata tables. This connects the maps scan to runtime initialization and native address setup, not to a demonstrated periodic background surveillance loop.
+
+**Practical implication:** the maps scan is relevant to understanding how Rasiel finds the correct loaded IL2CPP segment and converts metadata-relative offsets into live process addresses. It should not be presented as proof of anti-cheat behavior without a separate, explicit detection branch.
+
+## 74. Remaining native questions after identifying the IL2CPP mapping
+
+The highest-value next steps are now:
+
+1. Identify the structure and provenance of the native range/offset tables used with the `libil2cpp.so` mapping.
+2. Trace the address-description helper at `0x29808` and its callers to determine whether it formats diagnostics, resolves symbols, or both.
+3. Map the IL2CPP segment-relative offsets to the JNI registrations and the Java `MenuHost` methods already catalogued.
+4. Inspect the later initialization branches for any separate explicit module-name checks. Keep those separate from the now-explained `libil2cpp.so` discovery routine.
