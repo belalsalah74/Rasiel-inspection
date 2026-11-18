@@ -587,3 +587,58 @@ The highest-value next steps are now:
 2. Trace the address-description helper at `0x29808` and its callers to determine whether it formats diagnostics, resolves symbols, or both.
 3. Map the IL2CPP segment-relative offsets to the JNI registrations and the Java `MenuHost` methods already catalogued.
 4. Inspect the later initialization branches for any separate explicit module-name checks. Keep those separate from the now-explained `libil2cpp.so` discovery routine.
+
+
+## 75. Correction: native helper at `0x29808` is a diagnostic formatter, not an address resolver
+
+The previous section 74 listed `0x29808` as an address-description helper to investigate. Direct disassembly shows its role more precisely, and corrects that label.
+
+### Function behavior
+
+The routine at `0x29808`:
+
+1. Measures the NUL-terminated lengths of two input strings (`x0` and `x1`).
+2. Copies both strings into a stack buffer with a separating space.
+3. Appends the literal marker `x=`.
+4. Converts the third argument (`x2`) to hexadecimal using the character table `0123456789abcdef`.
+5. Sends the assembled message to the native logging helper at `0x212f0`.
+
+The call convention visible in its callers is therefore approximately `log_hex(prefix, description, value)`. The helper formats a diagnostic string; it does not itself look up an IL2CPP method or translate an RVA into a live pointer.
+
+### Evidence from callers
+
+- The routine has hundreds of call sites (746 direct branch-and-link references in the disassembly), indicating it is a shared diagnostic formatter used throughout the native library.
+- At `0x2bac0`, the maps/ELF inspection path passes a selected base/address value into this formatter.
+- At `0x2bb44` and `0x2bc14`, the same formatter is called while iterating address/range-related tables.
+- Other callers pass values obtained from JNI/runtime operations and native initialization structures.
+
+This connects the formatter to diagnostic reporting of values discovered by the runtime inspection code, but it does not make the formatter itself the resolver. The actual range/offset resolution logic remains in the callers and the map/ELF parsing routines.
+
+## 76. The maps routine proceeds into ELF metadata validation
+
+The code following the maps-file read does not stop at pathname matching. The parser:
+
+- Selects the mapping associated with the target runtime library.
+- Uses mapping boundaries as bounds for subsequent memory accesses.
+- Reads ELF-style structures and validates that derived pointers/offsets remain within the selected mapped range.
+- Walks indexed metadata tables and checks candidate offsets against recorded segment/range boundaries before accepting a derived address.
+- Emits diagnostic values through the formatter described in section 75 when it reaches selected success/error paths.
+
+The visible code includes checks of the form `candidate >= range_start` and `candidate + required_size <= range_end`, as well as offset calculations relative to a selected base. This is consistent with parsing/validating ELF load segments and translating file/segment-relative offsets into addresses in the currently loaded `libil2cpp.so`.
+
+The string pool is encoded/decoded at runtime, so several diagnostic labels appear as short opaque fragments in the on-disk `.rodata` and should not be guessed from those raw bytes. The behavior above is based on control flow and bounds checks, not assumed meanings for the encrypted labels.
+
+**Confidence:** high that the routine combines process-map discovery with bounded ELF-style metadata/offset validation; high that `0x29808` is a hex diagnostic formatter; medium-high that the overall purpose is runtime module/segment address resolution. Exact ELF header fields and each table's schema remain to be mapped.
+
+## 77. Updated native-analysis interpretation
+
+The best-supported model is now:
+
+1. Native setup reads `/proc/self/maps` to locate the live `libil2cpp.so` mapping.
+2. It uses the mapping's boundaries to safely inspect/validate runtime module metadata.
+3. It cross-checks derived offsets and pointers against mapped ranges.
+4. It reports selected values through a shared local logging formatter that writes to Android `logd`.
+
+This is a coherent implementation pattern for locating and validating IL2CPP runtime addresses used by a game overlay. It does not establish that the code scans for Frida/Xposed/LSPosed, nor that map contents are transmitted off-device.
+
+Remaining work: identify the precise ELF fields and global table layouts, then tie individual resolved addresses to the JNI registration table and Java `MenuHost` methods. That will make it possible to distinguish generic runtime support from game-specific hooks.
