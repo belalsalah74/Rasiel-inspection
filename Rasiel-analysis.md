@@ -959,11 +959,11 @@ Verified against disassembly `0x2aaf4–0x2ac6c`:
 3. Require the resulting pointer to be at least `0x10000`.
 4. If global `0xbc000 + 0x8a8` is nonzero, read another **8 bytes** from that pointer and require the value to equal the global. This is an optional object/type identity guard, although the meaning of the value is not yet known.
 5. Read **4 bytes** from `pointer + 0x28` using the same syscall.
-6. Accept the integer only if `1 <= value <= 2000` and the read returned exactly four bytes; otherwise return zero.
+6. Require the final syscall to return exactly four bytes; then accept the integer only if `1 <= value <= 2000`. Otherwise return zero.
 
-The code is careful about the byte counts for the first two reads. One subtlety: after the final four-byte read, it conditionally retains the parsed integer when the return count is **not equal to four** (`b.eq` branches to a zero-return path). This appears counterintuitive for a successful-read check, and may be a deliberate fail-closed or error-handling quirk. The disassembly should be rechecked against runtime behavior before assuming the integer is reliably returned on successful reads.
+At `0x2ac4c–0x2ac60`, the helper uses a range-checking conditional select to retain the integer or zero, then branches on whether the syscall returned four bytes. The `b.eq` branch at `0x2ac60` goes to the normal function epilogue at `0x2ac68`, preserving the selected integer. The fallthrough at `0x2ac64` zeroes the return value when the byte count is wrong. **This is a conventional success check, not an inverted one.**
 
-**Correction to section 85:** the earlier description of the final four-byte read as unconditionally returning a valid 1–2000 property on success was too strong. The final return-count branch needs specific validation.
+The integer is a numeric candidate filter. Its game-level semantic identity remains unknown.
 
 ## 90. The address base is populated from a parsed native tag/value table
 
@@ -985,6 +985,6 @@ This establishes that the base is **not a PID** and is **not a hardcoded constan
 ### Updated next targets
 
 - Trace the producers of the parallel tag/value arrays consumed at `0x241d4`.
-- Inspect the final read-count branch at `0x2ac48–0x2ac60` and determine whether the integer-property helper has a success-path inversion or another intended convention.
+- Trace the consumer of the validated integer at `pointer + 0x28` to identify its game-level meaning.
 - Locate the writers to the 24-entry candidate list and identify its actual IL2CPP object type.
 - Continue distinguishing **same-process memory reads** from any independently established cross-process access; no different target PID has been shown for these helpers.
