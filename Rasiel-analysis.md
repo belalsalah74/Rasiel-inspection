@@ -922,3 +922,69 @@ The remote read path is now established, but the exact object type remains unres
 5. Trace the post-selection caller to establish whether selection leads to a tap, encounter action, or a separate hunt state transition.
 
 Until those links are recovered, the most accurate description is **remote-object candidate selection by coordinate and numeric-property filters**, not confirmed Pokémon selection.
+
+
+## 88. Critical correction: `process_vm_readv` targets Rasiel's own process
+
+Reinspection of the actual ARM64 instructions in the supplied `libholomod.so` resolves the PID ambiguity in sections 85–87. The cached PID at `0xba000 + 0x828` is initialized by **AArch64 syscall 172, `getpid`**, not by a lookup of another process.
+
+Direct evidence in helper `0x2aaf4`:
+
+```asm
+2ab10: ldr  w0, [x9, #0x828]   // cached PID
+2ab14: cbnz w0, 0x2ab30
+2ab18: mov  x0, xzr
+2ab1c: mov  x2, xzr
+2ab20: mov  x1, xzr
+2ab24: mov  w8, #0xac          // syscall 172 = getpid
+2ab28: svc  #0
+2ab2c: str  w0, [x9, #0x828]
+...
+2ab4c: mov  w8, #0x10e         // syscall 270 = process_vm_readv
+2ab5c: svc  #0
+```
+
+The same lazy `getpid` initialization is present at `0x2ac94–0x2aca8` and `0x2ad08–0x2ad1c` in coordinate helper `0x2ac70`, and in other native memory-read wrappers.
+
+**Revised conclusion:** these helpers read virtual memory **from the current Pokémon GO process itself**, through `process_vm_readv(getpid(), ...)`. The code is not, on this evidence, inspecting a different process. Sections 85–87 correctly identified the syscall and pointer-chasing offsets but described the candidate objects as *remote-process* objects; read that terminology as *addresses accessed via a remote-iovec syscall*, not as evidence of a different target PID. The actual target is the current process.
+
+This distinction matters for the privacy and security assessment: use of `process_vm_readv` here is a guarded alternative to direct pointer dereference, allowing read failures to be handled without an ordinary invalid-pointer memory fault. The reason the developer chose this technique is inferred, not confirmed.
+
+## 89. The integer-property helper has a precise self-memory read and validation chain
+
+Verified against disassembly `0x2aaf4–0x2ac6c`:
+
+1. Load a 64-bit base from `0xb6000 + 0x4f8`; add the candidate argument to form the first address.
+2. Lazy-initialize the PID via `getpid` and read **8 bytes** from that address using `process_vm_readv`. Require exactly 8 bytes returned.
+3. Require the resulting pointer to be at least `0x10000`.
+4. If global `0xbc000 + 0x8a8` is nonzero, read another **8 bytes** from that pointer and require the value to equal the global. This is an optional object/type identity guard, although the meaning of the value is not yet known.
+5. Read **4 bytes** from `pointer + 0x28` using the same syscall.
+6. Accept the integer only if `1 <= value <= 2000` and the read returned exactly four bytes; otherwise return zero.
+
+The code is careful about the byte counts for the first two reads. One subtlety: after the final four-byte read, it conditionally retains the parsed integer when the return count is **not equal to four** (`b.eq` branches to a zero-return path). This appears counterintuitive for a successful-read check, and may be a deliberate fail-closed or error-handling quirk. The disassembly should be rechecked against runtime behavior before assuming the integer is reliably returned on successful reads.
+
+**Correction to section 85:** the earlier description of the final four-byte read as unconditionally returning a valid 1–2000 property on success was too strong. The final return-count branch needs specific validation.
+
+## 90. The address base is populated from a parsed native tag/value table
+
+The writer to `0xb6000 + 0x4f8` is visible at `0x241c8`, within a native initialization routine:
+
+```asm
+241d4: ldr x15, [x8], #8
+241d8: ldr x14, [x9], #8
+241dc: cmp x15, #2
+241e0: b.eq 0x241c8
+...
+241c8: str x14, [x11, #0x4f8]
+```
+
+The code walks two parallel arrays of 64-bit tags and values. A tag equal to `2` stores its associated value into the global used as the address base. A tag equal to `1` stores its value at `0xb6000 + 0x4f0`; other tags are written to a separate indexed table near `0xb6000 + 0x500`.
+
+This establishes that the base is **not a PID** and is **not a hardcoded constant**. It is a runtime-loaded tagged value. The provenance of those two arrays and the semantic meaning of tag `2` remain unresolved; treating the tag as a standard ELF `DT_*` tag would be premature without proving the table's origin.
+
+### Updated next targets
+
+- Trace the producers of the parallel tag/value arrays consumed at `0x241d4`.
+- Inspect the final read-count branch at `0x2ac48–0x2ac60` and determine whether the integer-property helper has a success-path inversion or another intended convention.
+- Locate the writers to the 24-entry candidate list and identify its actual IL2CPP object type.
+- Continue distinguishing **same-process memory reads** from any independently established cross-process access; no different target PID has been shown for these helpers.
